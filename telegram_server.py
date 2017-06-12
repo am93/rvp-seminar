@@ -23,6 +23,7 @@ class TelegramSender(threading.Thread):
         global devices
         while True:
             for d in devices:
+                print(d.name,', queue:',d.queue.qsize(),', socket:',d.sckt)
                 if d.name == 'Server':
                     continue #do nothing for now
                 if d.sckt is not None and d.last_sent == d.last_ack and d.queue.qsize() > 0:
@@ -30,20 +31,40 @@ class TelegramSender(threading.Thread):
                     d.sckt.sendall(bytes(new_payload, 'ascii'))
                     d.last_sent = new_payload
                     print('['+str(datetime.now())+'] Sending telegram -> '+d.name+': '+new_payload)
-            time.sleep(0.05)
+                    
+            time.sleep(5)
 
 
 class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 
+    def sending_logic(self, dev_id):
+        global devices
+        d = devices[dev_id]
+        if d.name == 'Server':
+            return
+        if d.sckt is not None and d.last_sent == d.last_ack and d.queue.qsize() > 0:
+            new_payload = d.queue.get(block=False)
+            d.sckt.sendall(bytes(new_payload, 'ascii'))
+            d.last_sent = new_payload
+            print('['+str(datetime.now())+'] Sending telegram -> '+d.name+': '+new_payload)
+
+    def finish(self):
+        pass
+
     def handle(self):
+
         #global sockets
         #if sockets == None:
         #    sockets = self.request
         data = str(self.request.recv(1024), 'ascii')
+        sckt = self.request
 
         # if payload length is less then 5, then it must be new device connection
         if len(data) < 5:
-            self.set_device_socket(self.client_address[0], self.request)
+            dev_id = self.set_device_socket(self.client_address[0], sckt)
+            while True and dev_id > -1:
+                self.sending_logic(dev_id)
+                time.sleep(0.2)
         else:
             print('['+str(datetime.now())+'] Received telegram: '+data)
             self.parse_payload(data, self.request)
@@ -52,11 +73,13 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
     def set_device_socket(self, addr, request):
         global devices
         for d in devices:
-            if addr == d.ip:
+            if addr == d.ip and d.sckt is None:
                 d.sckt = request    # TODO: check if this modifies object instance
-                print('Device '+d.ip+' connected...')
-                return
+                print('Device '+d.name+' ['+d.ip+'] connected...')
+                print(d.sckt)
+                return d.id
         print('Received message from unknown device: '+addr)
+        return -1
 
 
     def parse_payload(self, payload, request):
@@ -67,7 +90,8 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
         if not new_telegram[:4] == '0000':
             devices[int(new_telegram[1])].queue.put(new_telegram)
         # if last values is 1, we have ack telegram
-        if ack_telegram[-1]:
+        if int(ack_telegram[-1]):
+            print('['+str(datetime.now())+'] Telegram is ack: '+data)
             devices[int(new_telegram[1])].last_ack = ack_telegram[:-1:] + '0'
 
 
@@ -101,6 +125,7 @@ def initialize():
         elif opt in ('-r', '--robot'):
             robot = arg
         else:
+            print(opt)
             print('Run script with following options:')
             print('-i,  --ip    : ip address of server (default: 193.2.72.241)')
             print('-p,  --port  : port to which server will bind (default: 2017)')
@@ -135,8 +160,8 @@ if __name__ == "__main__":
     print("Server loop running on IP:",str(ip),", PORT:",str(port)," ...")
 
     # Start telegram sender thread
-    tlg_thread = TelegramSender()
-    tlg_thread.start()
+    #tlg_thread = TelegramSender()
+    #tlg_thread.start()
 
     while True:
         time.sleep(0.1)
