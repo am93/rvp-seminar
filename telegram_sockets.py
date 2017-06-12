@@ -37,7 +37,7 @@ class ClientThread(threading.Thread):
                 print('Device ' + d.name + ' [' + d.ip + '] connected...')
                 print(d.sckt)
                 return d.id
-            elif d.sckt is not None:
+            elif d.ip == rcv_ip and d.sckt is not None:
                 d.sckt = sckt
                 print('Device ' + d.name + ' [' + d.ip + '] reconnected...')
                 return d.id
